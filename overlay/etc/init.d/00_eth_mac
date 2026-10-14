@@ -7,7 +7,8 @@
 # falls back to a random MAC on every boot. Instead we pick a MAC once on the
 # first boot and keep it in the writable rootfs.
 #
-# Run before networking so udhcpc always requests with the same MAC.
+# Installed in the boot runlevel so it always runs before networking
+# (boot starts before default, and networking lives in the default runlevel).
 
 depend() {
 	before networking
@@ -19,10 +20,15 @@ MAC_FILE="/etc/eth-mac"
 generate_mac() {
 	# Prefer the chip's unique OTP id when the device tree exposes it, so the
 	# MAC survives a rootfs reflash. Fall back to random on first boot.
+	seed=""
 	if [ -r /sys/bus/nvmem/devices/rockchip-otp0/nvmem ]; then
 		seed=$(hexdump -v -e '1/1 "%02x"' -n 5 \
 			/sys/bus/nvmem/devices/rockchip-otp0/nvmem)
-	else
+	fi
+
+	# Unfused OTP reads as all zeros, which would give every board the same
+	# MAC; fall back to random in that case.
+	if [ "${#seed}" -ne 10 ] || [ "$seed" = "0000000000" ]; then
 		seed=$(hexdump -v -e '1/1 "%02x"' -n 5 /dev/urandom)
 	fi
 

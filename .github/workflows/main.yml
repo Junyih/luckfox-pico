@@ -74,43 +74,22 @@ jobs:
           pattern: "*-sysupgrade"
           path: release-output
           
-      - name: Check firmware images
-        run: |
-          find release-output -type f -name '*.img' -print
-
-          count=$(find release-output -type f -name '*.img' | wc -l)
-
-          if [ "$count" -ne 3 ]; then
-            echo "ERROR: Expected 3 firmware images, found $count"
-            exit 1
-          fi
-
-          echo "Found all 3 firmware images."
-
-      - name: Generate release tag
-        id: vars
-        run: |
-          echo "tag=build-$(date +'%Y%m%d-%H%M%S')-${GITHUB_SHA::7}" \
-            >> "$GITHUB_OUTPUT"
-
       - name: Prepare uniquely named firmware assets
         run: |
           mkdir -p release-assets
 
-          cp release-output/pico-plus-sysupgrade/*.img \
-             release-assets/pico-plus-alpine.img
-
-          cp release-output/pico-mini-b-sysupgrade/*.img \
-             release-assets/pico-mini-b-alpine.img
-
-          cp release-output/pico-pro-max-sysupgrade/*.img \
-             release-assets/pico-pro-max-alpine.img
+          for device in pico-plus pico-mini-b pico-pro-max; do
+            src="release-output/${device}-sysupgrade"
+            test -d "$src" || { echo "ERROR: missing artifact for $device"; exit 1; }
+            cp "$src"/*.img "release-assets/${device}-alpine.img"
+            test -s "release-assets/${device}-alpine.img"
+          done
 
           echo "=== Release assets ==="
           ls -lh release-assets/
-          test "$(find release-assets -maxdepth 1 -type f -name '*.img' | wc -l)" -eq 3
 
       - name: Publish firmware release
+        if: env.UPLOAD_RELEASE == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.vars.outputs.tag }}
@@ -126,6 +105,4 @@ jobs:
             Commit: ${{ github.sha }}
           make_latest: true
           files: |
-            release-assets/pico-plus-alpine.img
-            release-assets/pico-mini-b-alpine.img
-            release-assets/pico-pro-max-alpine.img
+            release-assets/*.img

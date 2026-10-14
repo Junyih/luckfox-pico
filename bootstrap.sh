@@ -43,10 +43,8 @@ rc-update add chronyd default
 
 # ============================================================
 # Install ZeroTier One from Alpine v3.17 ARMv7 packages
-# Target: Luckfox Pico Plus / Alpine 3.24 / armv7
+# Target: all Luckfox boards / Alpine 3.24 / armv7
 # ============================================================
-
-set -e
 
 echo "=== ZeroTier: checking architecture ==="
 ARCH="$(apk --print-arch)"
@@ -110,13 +108,11 @@ echo "=== ZeroTier: installed package information ==="
 apk info | grep -i zerotier || true
 
 # ZeroTier is left out of the runlevels on purpose: the init script is
-# installed, but autostart is enabled per device with enable-vpn.sh.
+# installed, but autostart is enabled per device with enable-zerotier-vpn.sh.
 
 echo "=== ZeroTier installation checks passed ==="
 
 rm -rf "$ZT_DIR"
-
-
 
 
 

@@ -69,7 +69,7 @@ overlay() {
     "$ROOTFS_WORKSPACE_MNT/etc/runlevels/default/10_usb_gadget"
 
   ln -s "/etc/init.d/00_eth_mac" \
-    "$ROOTFS_WORKSPACE_MNT/etc/runlevels/default/00_eth_mac"
+    "$ROOTFS_WORKSPACE_MNT/etc/runlevels/boot/00_eth_mac"
 }
 
 overlay

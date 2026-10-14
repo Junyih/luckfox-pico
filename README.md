@@ -11,7 +11,7 @@ Check out
 [Github Release](https://github.com/Junyih/luckfox-pico/releases)
 for latest Alpine Linux images.
 
-Only vierfied on pico-plus
+Only verified on pico-plus
 
 ## Flashing
 
@@ -19,7 +19,7 @@ See
 [the official docs](https://wiki.luckfox.com/Luckfox-Pico-Plus-Mini/Flash-image/)
 for instructions on flashing `update.img` to your Pico board.
 
-For example, to flash Pico Pro Max boards,
+For example, to flash a Pico Plus board,
 connect the board to your computer while pressing _BOOT_ key, then execute
 
 Linux:
@@ -45,6 +45,8 @@ To connect to it via ethernet, simply do
 ```bash
 ssh root@<ip_of_pico_board>
 ```
+
+The USB gadget (RNDIS) interface `usb0` has static IP `172.32.0.2/24`.
 
 
 ## Customization

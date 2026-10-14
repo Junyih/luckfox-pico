@@ -1,5 +1,5 @@
 #!/bin/bash
-# enable-vpn.sh - run on a Luckfox Pico Plus (Alpine) to turn on:
+# enable-zerotier-vpn.sh - run on a Luckfox Pico board (Alpine) to turn on:
 #   1. ZeroTier daemon at boot
 #   2. IPv4 forwarding
 #   3. Masquerade for forwarded traffic leaving eth0
@@ -34,8 +34,10 @@ rc-update add sysctl boot
 sysctl -w net.ipv4.ip_forward=1
 
 # 3. Masquerade on eth0
-cat > /etc/init.d/90_nat <<EOF
+cat > /etc/init.d/90_nat <<'EOF'
 #!/sbin/openrc-run
+
+description = "NAT masquerade for forwarded traffic leaving eth0"
 
 depend() {
 	need net
@@ -43,8 +45,9 @@ depend() {
 }
 
 start() {
-	${IPT} -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || \\
-		${IPT} -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+	ipt="$(command -v iptables-legacy || command -v iptables)"
+	"$ipt" -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || \
+		"$ipt" -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 }
 EOF
 chmod 755 /etc/init.d/90_nat

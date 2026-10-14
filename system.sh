@@ -73,7 +73,7 @@ esac
 ALPINE_VERSION=$(
   tar xOf "$ROOTFS_NAME" \
     --wildcards '*etc/alpine-release' 2>/dev/null \
-    | tr -d '[:space:]'
+    | tr -d '[:space:]' || true
 )
 
 if [ -z "$ALPINE_VERSION" ]; then
@@ -139,24 +139,24 @@ echo "export RK_CUSTOM_ROOTFS=../sysdrv/custom_rootfs/$ROOTFS_NAME" \
 echo 'export RK_BOOTARGS_CMA_SIZE="1M"' \
   >> .BoardConfig.mk
 
-if [ "$DEVICE_NAME" = "pico-plus" ]; then
-  FRAGMENT_NAME="luckfox-pico-plus-netfilter.config"
-  FRAGMENT_SOURCE="${SCRIPT_DIR}/patches/kernel/netfilter.config"
-  KERNEL_CONFIG_DIR="sysdrv/source/kernel/arch/arm/configs"
-  FRAGMENT_DEST="${KERNEL_CONFIG_DIR}/${FRAGMENT_NAME}"
+# All Luckfox boards share the same kernel defconfig
+# (luckfox_rv1106_linux_defconfig), so the netfilter/TUN fragment is applied
+# to every device: bootstrap.sh installs iptables and ZeroTier in the shared
+# rootfs, and ZeroTier needs CONFIG_TUN.
+FRAGMENT_NAME="luckfox-netfilter.config"
+FRAGMENT_SOURCE="${SCRIPT_DIR}/patches/kernel/netfilter.config"
+KERNEL_CONFIG_DIR="sysdrv/source/kernel/arch/arm/configs"
+FRAGMENT_DEST="${KERNEL_CONFIG_DIR}/${FRAGMENT_NAME}"
 
-  if [ ! -f "$FRAGMENT_SOURCE" ]; then
-    echo "ERROR: Kernel config fragment not found: $FRAGMENT_SOURCE" >&2
-    exit 1
-  fi
-
-  mkdir -p "$KERNEL_CONFIG_DIR"
-  cp "$FRAGMENT_SOURCE" "$FRAGMENT_DEST"
-  echo "export RK_KERNEL_DEFCONFIG_FRAGMENT=${FRAGMENT_NAME}" >> .BoardConfig.mk
-  echo "Applied Pico Plus kernel config fragment: $FRAGMENT_DEST"
-else
-  echo "Skipping Netfilter kernel config for device: $DEVICE_NAME"
+if [ ! -f "$FRAGMENT_SOURCE" ]; then
+  echo "ERROR: Kernel config fragment not found: $FRAGMENT_SOURCE" >&2
+  exit 1
 fi
+
+mkdir -p "$KERNEL_CONFIG_DIR"
+cp "$FRAGMENT_SOURCE" "$FRAGMENT_DEST"
+echo "export RK_KERNEL_DEFCONFIG_FRAGMENT=${FRAGMENT_NAME}" >> .BoardConfig.mk
+echo "Applied kernel config fragment: $FRAGMENT_DEST"
 
 # ============================================================
 # Workaround for custom rootfs directory creation
@@ -165,9 +165,13 @@ fi
 # The SDK's custom-rootfs extraction may write files into standard
 # subdirectories that do not exist in the minimal Alpine rootfs.
 # Patch project/build.sh directly because build.sh is a symlink.
-sed -i \
-  '/^\ttar xf \$rootfs_tarball -C \$RK_PROJECT_PACKAGE_ROOTFS_DIR$/a\\tmkdir -p $RK_PROJECT_PACKAGE_ROOTFS_DIR/{bin,sbin,etc/profile.d,etc/init.d,usr/bin,usr/sbin,usr/lib,usr/share,lib}' \
-  project/build.sh
+# Guarded so re-running the build does not append the patch twice.
+PATCH_LINE='mkdir -p $RK_PROJECT_PACKAGE_ROOTFS_DIR/{bin,sbin,etc/profile.d,etc/init.d,usr/bin,usr/sbin,usr/lib,usr/share,lib}'
+if ! grep -qF "$PATCH_LINE" project/build.sh; then
+  sed -i \
+    '/^\ttar xf \$rootfs_tarball -C \$RK_PROJECT_PACKAGE_ROOTFS_DIR$/a\\tmkdir -p $RK_PROJECT_PACKAGE_ROOTFS_DIR/{bin,sbin,etc/profile.d,etc/init.d,usr/bin,usr/sbin,usr/lib,usr/share,lib}' \
+    project/build.sh
+fi
 
 # ============================================================
 # Device tree workaround
