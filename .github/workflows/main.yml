@@ -88,6 +88,11 @@ jobs:
           echo "=== Release assets ==="
           ls -lh release-assets/
 
+      - name: Generate release tag
+        id: vars
+        run: |
+          echo "tag=build-$(date -u +%Y%m%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
       - name: Publish firmware release
         if: env.UPLOAD_RELEASE == 'true'
         uses: softprops/action-gh-release@v2
