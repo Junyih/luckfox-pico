@@ -8,13 +8,15 @@ Currently only [Alpine Linux](https://alpinelinux.org/) is available.
 ## Downloads
 
 Check out
-[Github Actions Artifacts](https://github.com/soyflourbread/luckfox-pico/actions/workflows/main.yml)
+[Github Release](https://github.com/Junyih/luckfox-pico/releases)
 for latest Alpine Linux images.
+
+Only vierfied on pico-plus
 
 ## Flashing
 
 See
-[the official docs](https://wiki.luckfox.com/Luckfox-Pico/Linux-MacOS-Burn-Image)
+[the official docs](https://wiki.luckfox.com/Luckfox-Pico-Plus-Mini/Flash-image/)
 for instructions on flashing `update.img` to your Pico board.
 
 For example, to flash Pico Pro Max boards,
@@ -22,12 +24,12 @@ connect the board to your computer while pressing _BOOT_ key, then execute
 
 Linux:
 ```bash
-sudo ./upgrade_tool uf pico-pro-max-sysupgrade.img
+sudo ./upgrade_tool uf pico-plus-alpine.img
 ```
 
 Windows:
 ```bash
-./upgrade_tool.exe uf pico-pro-max-sysupgrade.img
+./upgrade_tool.exe uf pico-plus-alpine.img
 ```
 
 
@@ -37,26 +39,13 @@ The default username/password is `root:luckfox`.
 
 UART serial debug port is enabled,
 and `sshd` server is installed and enabled as well.
+Eth0 for pico-plus and pico-pro-max is enabled with DHCP
 
 To connect to it via ethernet, simply do
 ```bash
 ssh root@<ip_of_pico_board>
 ```
 
-### RNDIS/Ethernet-over-USB
-
-This system image has RNDIS enabled for all boards.
-To connect to your Pico through RNDIS,
-check out [the official guide](https://wiki.luckfox.com/Luckfox-Pico/SSH-Telnet-Login/).
-
-The board's static IP is `172.32.0.93`.
-
-Below is a brief guide to connect via RNDIS on Linux:
-```bash
-ip link # obtain network device name of pico
-sudo ip addr add 172.32.0.100/16 dev <network_device_of_pico>
-ping 172.32.0.93 # it works!
-```
 
 ## Customization
 

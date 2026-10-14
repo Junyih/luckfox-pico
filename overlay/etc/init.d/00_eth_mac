@@ -1,0 +1,49 @@
+#!/sbin/openrc-run
+
+# Give eth0 a stable MAC that is unique per board.
+#
+# The Rockchip vendor storage path is not available on this board (no vnvm
+# partition, and no vendor storage backend in the defconfig), so the driver
+# falls back to a random MAC on every boot. Instead we pick a MAC once on the
+# first boot and keep it in the writable rootfs.
+#
+# Run before networking so udhcpc always requests with the same MAC.
+
+depend() {
+	before networking
+}
+
+MAC_FILE="/etc/eth-mac"
+
+# Locally administered, unicast: first octet 02.
+generate_mac() {
+	# Prefer the chip's unique OTP id when the device tree exposes it, so the
+	# MAC survives a rootfs reflash. Fall back to random on first boot.
+	if [ -r /sys/bus/nvmem/devices/rockchip-otp0/nvmem ]; then
+		seed=$(hexdump -v -e '1/1 "%02x"' -n 5 \
+			/sys/bus/nvmem/devices/rockchip-otp0/nvmem)
+	else
+		seed=$(hexdump -v -e '1/1 "%02x"' -n 5 /dev/urandom)
+	fi
+
+	[ "${#seed}" -eq 10 ] || return 1
+
+	printf '02:%s\n' "$(printf '%s' "$seed" | sed 's/../:&/g' | sed 's/^://')"
+}
+
+start() {
+	[ -e /sys/class/net/eth0 ] || return 0
+
+	if [ ! -s "$MAC_FILE" ]; then
+		mac=$(generate_mac) || {
+			echo "eth-mac: could not generate a MAC, leaving default"
+			return 0
+		}
+		echo "$mac" > "$MAC_FILE"
+		echo "eth-mac: generated $mac (stored in $MAC_FILE)"
+	else
+		mac=$(cat "$MAC_FILE")
+	fi
+
+	ip link set eth0 address "$mac"
+}

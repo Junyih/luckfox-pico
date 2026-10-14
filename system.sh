@@ -1,69 +1,247 @@
 #!/bin/bash
+set -eo pipefail
+# Absolute path to this repository, independent of the current directory
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+# ============================================================
+# Configuration
+# ============================================================
 
 ROOTFS_NAME="rootfs-alpine.tar.gz"
 DEVICE_NAME="pico-mini-b"
-LINUX_VER="Alpine-3.24.1"
-ALPINE_VERSION=$(tar xOf "$ROOTFS_NAME" --wildcards '*etc/alpine-release' 2>/dev/null | tr -d '[:space:]')
-[ -z "$ALPINE_VERSION" ] && ALPINE_VERSION="unknown"
-BUILD_DATE=$(date +%Y%m%d)
-IMAGE_NAME="$DEVICE_NAME-alpine-$ALPINE_VERSION-$BUILD_DATE-sysupgrade"
+
+# ============================================================
+# Parse command-line arguments
+# Usage:
+#   ./system.sh -f rootfs-alpine.tar.gz -d pico-plus
+# ============================================================
 
 while getopts ":f:d:" opt; do
-  case ${opt} in
-    f) ROOTFS_NAME="${OPTARG}" ;;
-    d) DEVICE_NAME="${OPTARG}" ;;
-    ?)
-      echo "Invalid option: -${OPTARG}."
+  case "${opt}" in
+    f)
+      ROOTFS_NAME="${OPTARG}"
+      ;;
+    d)
+      DEVICE_NAME="${OPTARG}"
+      ;;
+    :)
+      echo "ERROR: Option -${OPTARG} requires an argument." >&2
+      exit 1
+      ;;
+    \?)
+      echo "ERROR: Invalid option -${OPTARG}." >&2
       exit 1
       ;;
   esac
 done
 
-DEVICE_ID="6"
-case $DEVICE_NAME in
-  pico-mini-b) DEVICE_ID="6" ;;
-  pico-plus) DEVICE_ID="7" ;;
-  pico-pro-max) DEVICE_ID="8" ;;
+# ============================================================
+# Validate input
+# ============================================================
+
+if [ ! -f "$ROOTFS_NAME" ]; then
+  echo "ERROR: Rootfs archive not found: $ROOTFS_NAME" >&2
+  exit 1
+fi
+
+# ============================================================
+# Select target device
+# ============================================================
+
+case "$DEVICE_NAME" in
+  pico-mini-b)
+    DEVICE_ID="6"
+    ;;
+  pico-plus)
+    DEVICE_ID="7"
+    ;;
+  pico-pro-max)
+    DEVICE_ID="8"
+    ;;
   *)
-    echo "Invalid device: ${DEVICE_NAME}."
+    echo "ERROR: Invalid device: ${DEVICE_NAME}" >&2
+    echo "Supported devices: pico-mini-b, pico-plus, pico-pro-max" >&2
     exit 1
     ;;
 esac
 
+# ============================================================
+# Determine Alpine version and output image name
+# IMPORTANT: This must happen AFTER parsing -f and -d.
+# ============================================================
+
+ALPINE_VERSION=$(
+  tar xOf "$ROOTFS_NAME" \
+    --wildcards '*etc/alpine-release' 2>/dev/null \
+    | tr -d '[:space:]'
+)
+
+if [ -z "$ALPINE_VERSION" ]; then
+  ALPINE_VERSION="unknown"
+fi
+
+BUILD_DATE=$(date +%Y%m%d)
+
+IMAGE_NAME="${DEVICE_NAME}-alpine-${ALPINE_VERSION}-${BUILD_DATE}-sysupgrade"
+
+echo "============================================================"
+echo "Build configuration"
+echo "============================================================"
+echo "Device:        $DEVICE_NAME"
+echo "Device ID:     $DEVICE_ID"
+echo "Rootfs:        $ROOTFS_NAME"
+echo "Alpine:        $ALPINE_VERSION"
+echo "Build date:    $BUILD_DATE"
+echo "Output image:  output/${IMAGE_NAME}.img"
+echo "============================================================"
+
+# ============================================================
+# Prepare custom rootfs
+# ============================================================
+
 rm -rf sdk/sysdrv/custom_rootfs/
 mkdir -p sdk/sysdrv/custom_rootfs/
+
 cp "$ROOTFS_NAME" sdk/sysdrv/custom_rootfs/
 
-pushd sdk || exit
+# ============================================================
+# Enter Rockchip SDK
+# ============================================================
 
-pushd tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/ || exit
+pushd sdk || exit 1
+
+# Load cross-compilation toolchain environment
+
+pushd tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/ || exit 1
+
+# Arguments -f and -d have already been parsed.
+# Clear positional parameters so the sourced toolchain script
+# does not mistake "-f" for its optional directory argument.
+set --
 source env_install_toolchain.sh
-popd || exit
 
-rm -rf .BoardConfig.mk
+popd || exit 1
+
+
+# ============================================================
+# Select board configuration
+# ============================================================
+
+rm -f .BoardConfig.mk
+
 echo "$DEVICE_ID" | ./build.sh lunch
-echo "export RK_CUSTOM_ROOTFS=../sysdrv/custom_rootfs/$ROOTFS_NAME" >> .BoardConfig.mk
-echo "export RK_BOOTARGS_CMA_SIZE=\"1M\"" >> .BoardConfig.mk
 
-# Workaround: build.sh при custom rootfs пишет файлы в стандартные подкаталоги
-# (bin/, etc/profile.d/, etc/init.d/, usr/bin/ и т.д.), не создавая их —
-# минимальный Alpine-rootfs их не содержит. Создаём заранее, сразу после распаковки.
-# Патчим project/build.sh напрямую — build.sh это симлинк на него, sed -i иначе его сломает.
-sed -i '/^\ttar xf \$rootfs_tarball -C \$RK_PROJECT_PACKAGE_ROOTFS_DIR$/a\\tmkdir -p $RK_PROJECT_PACKAGE_ROOTFS_DIR/{bin,sbin,etc/profile.d,etc/init.d,usr/bin,usr/sbin,usr/lib,usr/share,lib}' project/build.sh
-sed -i '/^&gmac {$/,/^};$/ s/status = "disabled";/status = "okay";/' \
-  sysdrv/source/kernel/arch/arm/boot/dts/rv1103g-luckfox-pico-mini-b.dts
+# Use the Alpine rootfs archive generated by rootfs.sh
+echo "export RK_CUSTOM_ROOTFS=../sysdrv/custom_rootfs/$ROOTFS_NAME" \
+  >> .BoardConfig.mk
 
+# Reduce CMA reservation for this low-memory target
+echo 'export RK_BOOTARGS_CMA_SIZE="1M"' \
+  >> .BoardConfig.mk
+
+if [ "$DEVICE_NAME" = "pico-plus" ]; then
+  FRAGMENT_NAME="luckfox-pico-plus-netfilter.config"
+  FRAGMENT_SOURCE="${SCRIPT_DIR}/patches/kernel/netfilter.config"
+  KERNEL_CONFIG_DIR="sysdrv/source/kernel/arch/arm/configs"
+  FRAGMENT_DEST="${KERNEL_CONFIG_DIR}/${FRAGMENT_NAME}"
+
+  if [ ! -f "$FRAGMENT_SOURCE" ]; then
+    echo "ERROR: Kernel config fragment not found: $FRAGMENT_SOURCE" >&2
+    exit 1
+  fi
+
+  mkdir -p "$KERNEL_CONFIG_DIR"
+  cp "$FRAGMENT_SOURCE" "$FRAGMENT_DEST"
+  echo "export RK_KERNEL_DEFCONFIG_FRAGMENT=${FRAGMENT_NAME}" >> .BoardConfig.mk
+  echo "Applied Pico Plus kernel config fragment: $FRAGMENT_DEST"
+else
+  echo "Skipping Netfilter kernel config for device: $DEVICE_NAME"
+fi
+
+# ============================================================
+# Workaround for custom rootfs directory creation
+# ============================================================
+
+# The SDK's custom-rootfs extraction may write files into standard
+# subdirectories that do not exist in the minimal Alpine rootfs.
+# Patch project/build.sh directly because build.sh is a symlink.
+sed -i \
+  '/^\ttar xf \$rootfs_tarball -C \$RK_PROJECT_PACKAGE_ROOTFS_DIR$/a\\tmkdir -p $RK_PROJECT_PACKAGE_ROOTFS_DIR/{bin,sbin,etc/profile.d,etc/init.d,usr/bin,usr/sbin,usr/lib,usr/share,lib}' \
+  project/build.sh
+
+# ============================================================
+# Device tree workaround
+# NOTE: Preserved from the original script.
+# This currently modifies the Mini B DTS for every target device.
+# ============================================================
+
+if [ "$DEVICE_NAME" = "pico-mini-b" ]; then
+  DTS_FILE="sysdrv/source/kernel/arch/arm/boot/dts/rv1103g-luckfox-pico-mini-b.dts"
+
+  if [ ! -f "$DTS_FILE" ]; then
+    echo "ERROR: Mini B DTS file not found: $DTS_FILE" >&2
+    exit 1
+  fi
+
+  echo "Enabling GMAC in Mini B device tree: $DTS_FILE"
+
+  sed -i \
+    '/^&gmac {$/,/^};$/ s/status = "disabled";/status = "okay";/' \
+    "$DTS_FILE"
+else
+  echo "Skipping Mini B DTS workaround for device: $DEVICE_NAME"
+fi
+
+# ============================================================
+# Build firmware
+# ============================================================
+
+echo "=== Building U-Boot ==="
 sudo ./build.sh uboot
+
+echo "=== Building kernel ==="
 sudo ./build.sh kernel
+
+echo "=== Building drivers ==="
 sudo ./build.sh driver
+
+echo "=== Building environment ==="
 sudo ./build.sh env
+
+echo "=== Building firmware ==="
 sudo ./build.sh firmware
+
+echo "=== Saving firmware ==="
 sudo ./build.sh save
 
-popd || exit
+popd || exit 1
 
-rm -rf output
+# ============================================================
+# Collect final image
+# ============================================================
+
 mkdir -p output
 
-cp sdk/output/image/update.img "output/$IMAGE_NAME.img"
-[ -n "$GITHUB_OUTPUT" ] && echo "image-name=$IMAGE_NAME" >> "$GITHUB_OUTPUT"
+if [ ! -f sdk/output/image/update.img ]; then
+  echo "ERROR: SDK did not generate sdk/output/image/update.img" >&2
+  exit 1
+fi
+
+cp sdk/output/image/update.img "output/${IMAGE_NAME}.img"
+
+# ============================================================
+# Verify output
+# ============================================================
+
+echo "============================================================"
+echo "Firmware build completed"
+echo "============================================================"
+
+ls -lh "output/${IMAGE_NAME}.img"
+file "output/${IMAGE_NAME}.img"
+
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  echo "image-name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+fi
+
+echo "Output: output/${IMAGE_NAME}.img"
