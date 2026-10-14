@@ -8,9 +8,9 @@
 # first boot and keep it in the writable rootfs.
 #
 # Installed in the default runlevel, ordered before networking. It must NOT be
-# in the boot runlevel: the root fs is still read-only during boot, so the
-# file can only be read there, not created. The MAC itself is baked into the
-# rootfs as /etc/eth-mac, so the read path is what runs on every boot.
+# in the boot runlevel: eth0 may not exist yet there, so the file would never
+# be created. The MAC is generated on first boot (chip OTP id when available,
+# random otherwise) and then reused from the file on every later boot.
 
 depend() {
 	after devfs procfs sysfs
@@ -19,14 +19,20 @@ depend() {
 
 MAC_FILE="/etc/eth-mac"
 
+# rv1106 device tree exposes the chip unique id as the otp_id cell:
+#   otp_id: id@a { reg = <0x0a 0x10>; }
+# rv1103 boards do not define the OTP node, so this path is skipped there.
+OTP_DEVICE="/sys/bus/nvmem/devices/rockchip-otp0/nvmem"
+OTP_ID_OFFSET=10
+
 # Locally administered, unicast: first octet 02.
 generate_mac() {
-	# Prefer the chip's unique OTP id when the device tree exposes it, so the
-	# MAC survives a rootfs reflash. Fall back to random on first boot.
+	# Prefer the chip's unique OTP id so the MAC is unique per board and
+	# survives a rootfs reflash. Fall back to random otherwise.
 	seed=""
-	if [ -r /sys/bus/nvmem/devices/rockchip-otp0/nvmem ]; then
-		seed=$(hexdump -v -e '1/1 "%02x"' -n 5 \
-			/sys/bus/nvmem/devices/rockchip-otp0/nvmem)
+	if [ -r "$OTP_DEVICE" ]; then
+		seed=$(hexdump -v -e '1/1 "%02x"' -s "$OTP_ID_OFFSET" -n 5 \
+			"$OTP_DEVICE" 2>/dev/null)
 	fi
 
 	# Unfused OTP reads as all zeros, which would give every board the same
@@ -41,21 +47,25 @@ generate_mac() {
 }
 
 start() {
+	# Write the file before touching the interface: eth0 may not exist yet,
+	# and the file must be created even when the interface is absent.
+	mac=""
+	if [ -s "$MAC_FILE" ]; then
+		mac=$(cat "$MAC_FILE")
+	fi
+	if [ -z "$mac" ]; then
+		mac=$(generate_mac) || return 0
+		# Best effort: if the root fs is not writable yet the MAC still
+		# applies for this boot, and is regenerated (and saved) next boot.
+		echo "$mac" > "$MAC_FILE" 2>/dev/null
+	fi
+
 	i=0
 	while [ ! -e /sys/class/net/eth0 ] && [ "$i" -lt 15 ]; do
 		sleep 1
 		i=$((i + 1))
 	done
 	[ -e /sys/class/net/eth0 ] || return 0
-
-	if [ -s "$MAC_FILE" ]; then
-		mac=$(cat "$MAC_FILE")
-	else
-		# Best-effort: only works once the root fs is writable. With the file
-		# baked into the rootfs this branch is never taken.
-		mac=$(generate_mac) || return 0
-		echo "$mac" > "$MAC_FILE" 2>/dev/null
-	fi
 
 	ip link show eth0 | grep -q "state UP" && ip link set eth0 down
 	ip link set eth0 address "$mac"
