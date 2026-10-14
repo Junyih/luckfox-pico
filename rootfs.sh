@@ -70,8 +70,8 @@ overlay() {
 
   # Default runlevel, not boot: in the boot runlevel eth0 may not exist yet,
   # so the script would never create /etc/eth-mac. In default it runs before
-  # networking and generates a per-board MAC on first boot (chip OTP id when
-  # the SoC exposes one, random otherwise), then reuses it from the file.
+  # networking and derives the MAC from the chip OTP id every boot; the file
+  # is only used when the OTP id is unreadable or unfused.
   ln -s "/etc/init.d/00_eth_mac" \
     "$ROOTFS_WORKSPACE_MNT/etc/runlevels/default/00_eth_mac"
 }
