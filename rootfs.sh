@@ -68,8 +68,11 @@ overlay() {
   ln -s "/etc/init.d/10_usb_gadget" \
     "$ROOTFS_WORKSPACE_MNT/etc/runlevels/default/10_usb_gadget"
 
+  # Default runlevel, not boot: the root fs is still read-only during boot,
+  # so the script can only read the baked /etc/eth-mac there, not create it.
+  # In default it runs after the read/write remount and before networking.
   ln -s "/etc/init.d/00_eth_mac" \
-    "$ROOTFS_WORKSPACE_MNT/etc/runlevels/boot/00_eth_mac"
+    "$ROOTFS_WORKSPACE_MNT/etc/runlevels/default/00_eth_mac"
 }
 
 overlay
