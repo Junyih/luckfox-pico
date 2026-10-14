@@ -7,10 +7,13 @@
 # falls back to a random MAC on every boot. Instead we pick a MAC once on the
 # first boot and keep it in the writable rootfs.
 #
-# Installed in the boot runlevel so it always runs before networking
-# (boot starts before default, and networking lives in the default runlevel).
+# Installed in the default runlevel, ordered before networking. It must NOT be
+# in the boot runlevel: the root fs is still read-only during boot, so the
+# file can only be read there, not created. The MAC itself is baked into the
+# rootfs as /etc/eth-mac, so the read path is what runs on every boot.
 
 depend() {
+	after devfs procfs sysfs
 	before networking
 }
 
@@ -38,18 +41,23 @@ generate_mac() {
 }
 
 start() {
+	i=0
+	while [ ! -e /sys/class/net/eth0 ] && [ "$i" -lt 15 ]; do
+		sleep 1
+		i=$((i + 1))
+	done
 	[ -e /sys/class/net/eth0 ] || return 0
 
-	if [ ! -s "$MAC_FILE" ]; then
-		mac=$(generate_mac) || {
-			echo "eth-mac: could not generate a MAC, leaving default"
-			return 0
-		}
-		echo "$mac" > "$MAC_FILE"
-		echo "eth-mac: generated $mac (stored in $MAC_FILE)"
-	else
+	if [ -s "$MAC_FILE" ]; then
 		mac=$(cat "$MAC_FILE")
+	else
+		# Best-effort: only works once the root fs is writable. With the file
+		# baked into the rootfs this branch is never taken.
+		mac=$(generate_mac) || return 0
+		echo "$mac" > "$MAC_FILE" 2>/dev/null
 	fi
 
+	ip link show eth0 | grep -q "state UP" && ip link set eth0 down
 	ip link set eth0 address "$mac"
+	ip link set eth0 up
 }
