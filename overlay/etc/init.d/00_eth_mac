@@ -7,10 +7,10 @@
 # driver assigns a random MAC at probe time and every boot gets a different
 # one. We set the MAC before networking comes up.
 #
-# Whenever the SoC OTP (efuse) unique id is readable the MAC is derived from
-# it: deterministic, unique per chip, and it needs no writable filesystem, so
-# it survives a rootfs reflash. Only when the OTP id is missing or unfused do
-# we fall back to a random MAC kept in the writable rootfs.
+# Whenever the SoC OTP (efuse) is readable the MAC is derived from it:
+# deterministic, unique per chip, and it needs no writable filesystem, so it
+# survives a rootfs reflash. Only when the OTP is missing or completely
+# unfused do we fall back to a random MAC kept in the writable rootfs.
 #
 # Installed in the default runlevel, ordered before networking. It must NOT be
 # in the boot runlevel: eth0 may not exist yet there, so the file would never
@@ -23,12 +23,14 @@ depend() {
 
 MAC_FILE="/etc/eth-mac"
 
-# rv1106 device tree exposes the chip unique id as the otp_id cell:
-#   otp_id: id@a { reg = <0x0a 0x10>; }
-# rv1103 boards include rv1106.dtsi, so the same node is present there.
+# rv1106/rv1103 expose their whole factory OTP as one nvmem device. The
+# otp_id cell in the device tree (0x0a..0x19) is only a slice of it, and on
+# boards whose per-chip serial is unfused that slice is nothing but the
+# factory lot code, identical for every board in the batch. The rest of the
+# region holds the per-chip calibration fuses, which do differ, so the MAC is
+# seeded from the entire read-only region.
 OTP_DEVICE="/sys/bus/nvmem/devices/rockchip-otp0/nvmem"
-OTP_ID_OFFSET=10
-OTP_ID_BYTES=16
+OTP_MIN_BYTES=16
 
 is_mac() {
 	case "$1" in
@@ -42,21 +44,20 @@ format_mac() {
 	printf '02:%s\n' "$(printf '%s' "$1" | sed 's/../:&/g' | sed 's/^://')"
 }
 
-# Read the whole otp_id cell. Fails when the OTP is unavailable or completely
+# Read the whole OTP region. Fails when the OTP is unavailable or completely
 # unfused, which carries no per-board entropy.
 read_otp_seed() {
 	[ -r "$OTP_DEVICE" ] || return 1
-	seed=$(hexdump -v -e '1/1 "%02x"' -s "$OTP_ID_OFFSET" -n "$OTP_ID_BYTES" \
-		"$OTP_DEVICE" 2>/dev/null)
-	[ "${#seed}" -eq $((OTP_ID_BYTES * 2)) ] || return 1
+	seed=$(hexdump -v -e '1/1 "%02x"' "$OTP_DEVICE" 2>/dev/null)
+	[ "${#seed}" -ge $((OTP_MIN_BYTES * 2)) ] || return 1
 	case "$seed" in
 		*[1-9a-f]*) printf '%s\n' "$seed" ;;
 		*) return 1 ;;
 	esac
 }
 
-# Fold the whole id through sha1 so a difference anywhere in the cell changes
-# the MAC, not just the factory lot code at the start of the cell.
+# Fold the whole region through sha1 so a difference anywhere in it changes
+# the MAC, not just the factory lot code at the start of the otp_id cell.
 otp_mac() {
 	seed=$(read_otp_seed) || return 1
 	seed=$(printf '%s' "$seed" | sha1sum | cut -c1-10)
